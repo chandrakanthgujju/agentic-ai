@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# CDK
+cdk.out/
+cdk.context.json
+.cdk.staging/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Local env
+.env
+.env.*
