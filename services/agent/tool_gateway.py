@@ -11,12 +11,15 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 from collections.abc import AsyncIterator
 
-from schema import to_bedrock_tool_spec
+from schema import InvalidToolError, to_bedrock_tool_spec
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -45,8 +48,15 @@ class _McpSession:
         if cache and time.monotonic() - cache[0] < self._gw.cache_ttl_s:
             return cache[1]
         listed = await asyncio.wait_for(self._client.list_tools(), self._gw.timeout_s)
-        specs = [to_bedrock_tool_spec(t.name, t.description, t.input_schema) for t in listed.tools]
-        self._gw._cache = (time.monotonic(), specs, {t.name for t in listed.tools})
+        specs, names = [], set()
+        for t in listed.tools:
+            try:
+                specs.append(to_bedrock_tool_spec(t.name, t.description, t.input_schema))
+                names.add(t.name)
+            except InvalidToolError as exc:
+                # One bad tool must not take the whole catalog (or the chat) down.
+                log.error("skipping MCP tool that Bedrock would reject", extra={"tool": t.name, "error": str(exc)})
+        self._gw._cache = (time.monotonic(), specs, names)
         return specs
 
     async def call_tool(self, name: str, arguments: dict) -> ToolResult:

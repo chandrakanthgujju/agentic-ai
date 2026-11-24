@@ -31,6 +31,31 @@ fields @timestamp, level, message, conversation_id, model, error_code
 
 Traces: X-Ray shows API Gateway → agent → Bedrock / DynamoDB / MCP Function URL.
 
+## Diagnosing chat errors
+
+The UI shows the error code and a sanitized copy of Bedrock's message (ARNs, account ids and
+access-key ids removed, max 300 characters). The agent logs the full error. Each function has its
+own CDK-named log group; find the agent's:
+
+```bash
+aws logs describe-log-groups --query "logGroups[?contains(logGroupName,'AgenticAi-Api-Agent')].logGroupName" --output text
+```
+
+Then run this in CloudWatch Logs Insights against that group:
+
+```
+fields @timestamp, model, error_code, error_message, @message
+| filter message in ["agent failed", "model rejected request with tools; retrying without tools", "skipping MCP tool that Bedrock would reject"]
+| parse @message /operation: (?<bedrock_reason>[^"\\]+)/
+| display @timestamp, message, model, error_code, bedrock_reason, error_message
+| sort @timestamp desc
+| limit 50
+```
+
+`bedrock_reason` is Bedrock's own explanation, e.g. which `toolConfig...` or `messages...` field it
+rejected. `AccessDeniedException` means model access or IAM; `ValidationException` means the request
+shape; `ThrottlingException` means quota.
+
 ## Knowledge-base maintenance
 
 - **Add/replace a document**: upload from the KB tab. The S3 event is queued and an ingestion job

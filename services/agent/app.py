@@ -17,6 +17,7 @@ The response is Server-Sent Events over a single HTTP response:
 from __future__ import annotations
 
 import json
+import re
 import logging
 import os
 import time
@@ -120,6 +121,33 @@ def _sse(event: AgentEvent | tuple[str, dict]) -> bytes:
     return f"event: {etype}\ndata: {json.dumps(data, separators=(',', ':'), default=str)}\n\n".encode()
 
 
+_ARN_RE = re.compile(r"arn:aws[a-zA-Z-]*:[^\s\"',;)]*")
+_ACCOUNT_RE = re.compile(r"\b\d{12}\b")
+_KEY_RE = re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")
+_PUBLIC_ERROR_LIMIT = 300
+
+
+def public_error(exc: BaseException) -> tuple[str, str]:
+    """Return ``(code, message)`` that is safe and useful to show in the browser.
+
+    AWS service errors (``ClientError``, including errors raised from inside an
+    event stream) carry a message that explains what was wrong with the request,
+    e.g. which field Bedrock rejected. We pass that through after removing ARNs,
+    account ids and access-key ids, and cap the length. Anything else is an
+    internal bug and gets a generic message; details stay in the logs.
+    """
+    error = (getattr(exc, "response", None) or {}).get("Error", {})
+    code = str(error.get("Code") or type(exc).__name__)
+    raw = error.get("Message")
+    if not raw:
+        return code, "The model call failed. Please retry."
+    msg = _KEY_RE.sub("<redacted>", _ACCOUNT_RE.sub("<account>", _ARN_RE.sub("<arn>", str(raw))))
+    msg = " ".join(msg.split())
+    if len(msg) > _PUBLIC_ERROR_LIMIT:
+        msg = msg[: _PUBLIC_ERROR_LIMIT - 1] + "…"
+    return code, msg
+
+
 def _emit_metric(name: str, value: float, _dims: dict) -> None:
     if metrics is None:
         return
@@ -169,10 +197,10 @@ async def chat(request: Request):
             async for event in loop.run(spec, history, req.message):
                 yield _sse(event)
         except Exception as exc:  # noqa: BLE001 - always end the stream with a typed error
-            code = getattr(exc, "response", {}).get("Error", {}).get("Code", type(exc).__name__)
-            logger.exception("agent failed", extra={"error_code": code, "model": spec.id})
+            code, public_message = public_error(exc)
+            logger.exception("agent failed", extra={"error_code": code, "error_message": str(exc), "model": spec.id})
             _emit_metric("AgentErrors", 1, {})
-            yield _sse(("error", {"message": "The model call failed. Please retry.", "code": code}))
+            yield _sse(("error", {"message": public_message, "code": code}))
         finally:
             if loop.outcome is not None:
                 try:
