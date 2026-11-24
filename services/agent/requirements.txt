@@ -1,0 +1,6 @@
+mcp==2.3.0
+starlette==1.10.0
+uvicorn==0.54.0
+aws-lambda-powertools==3.41.0
+pydantic==2.14.4
+boto3==1.44.10

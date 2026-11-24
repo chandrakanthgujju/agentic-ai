@@ -1,0 +1,14 @@
+-r requirements.txt
+# Runtime libraries (same pins as services/*/requirements.txt) so tests import them.
+mcp==2.3.0
+mangum==0.22.0
+starlette==1.10.0
+uvicorn==0.54.0
+aws-lambda-powertools[tracer]==3.41.0
+pydantic==2.14.4
+boto3==1.44.10
+# Test / lint / docs tooling
+pytest==9.2.0
+moto[s3,dynamodb]==5.2.6
+ruff==0.17.6
+diagrams==0.25.1
