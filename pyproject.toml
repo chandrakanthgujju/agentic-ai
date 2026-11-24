@@ -1,0 +1,33 @@
+[project]
+name = "agentic-ai-serverless"
+version = "1.0.0"
+description = "Serverless agentic chatbot on AWS: Bedrock + MCP tools + RAG (S3 Vectors), deployed with CDK"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "services"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 140
+target-version = "py312"
+extend-exclude = ["cdk.out", ".venv", "docs/architecture/*.png"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "BLE", "S", "ARG"]
+ignore = [
+  "S101",   # asserts are fine in tests
+  "S311",   # random is used for simulated latency/jitter, not crypto
+  "B008",
+  "UP037",
+  "UP017",
+  "I001",   # import grouping differs per Lambda bundle (service-local modules vs shared)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "ARG", "BLE", "B"]
+"infra/constructs/**" = ["S603"]
+"infra/components/python_function.py" = ["S603"]
+"docs/**" = ["S"]

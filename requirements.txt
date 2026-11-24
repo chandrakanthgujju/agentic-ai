@@ -1,0 +1,4 @@
+# CDK app (infra/) - what `cdk synth` / `cdk deploy` need on your laptop.
+aws-cdk-lib==2.278.0
+constructs>=10.4.2,<11
+cdk-nag==3.1.0

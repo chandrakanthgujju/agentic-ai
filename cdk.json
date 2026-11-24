@@ -1,0 +1,72 @@
+{
+  "app": "python3 infra/app.py",
+  "watch": {
+    "include": [
+      "infra/**",
+      "services/**",
+      "frontend/**"
+    ],
+    "exclude": [
+      "**/__pycache__",
+      "**/*.pyc",
+      "tests/**"
+    ]
+  },
+  "context": {
+    "agentic:config": {
+      "projectName": "agentic-ai",
+      "models": [
+        {
+          "id": "us.amazon.nova-micro-v1:0",
+          "label": "Amazon Nova Micro (fastest, lowest cost)",
+          "provider": "Amazon",
+          "maxTokens": 1024,
+          "temperature": 0.2
+        },
+        {
+          "id": "us.amazon.nova-lite-v1:0",
+          "label": "Amazon Nova Lite (balanced)",
+          "provider": "Amazon",
+          "maxTokens": 1500,
+          "temperature": 0.2
+        },
+        {
+          "id": "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+          "label": "Anthropic Claude Haiku 4.5 (best tool use)",
+          "provider": "Anthropic",
+          "maxTokens": 1500,
+          "temperature": 0.2
+        }
+      ],
+      "defaultModelId": "us.amazon.nova-lite-v1:0",
+      "embeddingModelId": "amazon.titan-embed-text-v2:0",
+      "embeddingDimensions": 1024,
+      "enableGuardrail": true,
+      "enableWaf": false,
+      "alarmEmail": "",
+      "monthlyBudgetUsd": 0,
+      "apiRateLimit": 20,
+      "apiBurstLimit": 40,
+      "chatRateLimit": 5,
+      "chatBurstLimit": 10,
+      "agentReservedConcurrency": 0,
+      "conversationTtlDays": 30,
+      "retainData": false,
+      "lambdaWebAdapterLayerVersion": 30,
+      "lambdaWebAdapterAccount": "753240598075",
+      "cognitoDomainPrefix": "",
+      "extraUploadOrigins": []
+    },
+    "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
+    "@aws-cdk/core:checkSecretUsage": true,
+    "@aws-cdk/core:target-partitions": [
+      "aws"
+    ],
+    "@aws-cdk/aws-iam:minimizePolicies": true,
+    "@aws-cdk/core:validateSnapshotRemovalPolicy": true,
+    "@aws-cdk/aws-s3:createDefaultLoggingPolicy": true,
+    "@aws-cdk/core:enablePartitionLiterals": true,
+    "@aws-cdk/aws-s3:serverAccessLogsUseBucketPolicy": true,
+    "@aws-cdk/core:defaultCrossStackReferences": "strong"
+  }
+}
