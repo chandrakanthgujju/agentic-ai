@@ -216,3 +216,42 @@ def test_non_retryable_error_propagates():
 
     with pytest.raises(ClientError):
         run(make(Broken(), None))
+
+
+def test_tool_config_rejection_falls_back_to_answer_without_tools():
+    class RejectsTools(FakeBedrock):
+        def converse_stream(self, **req):
+            if "toolConfig" in req:
+                self.requests.append(json.loads(json.dumps(req)))
+                raise ClientError(
+                    {"Error": {"Code": "ValidationException", "Message": "The tool configuration is invalid."}}, "ConverseStream"
+                )
+            return super().converse_stream(**req)
+
+    bedrock = RejectsTools([text_turn("Answer without tools.")])
+    metrics = []
+    loop = make(bedrock, FakeGateway(FakeSession()))
+    loop.on_metric = lambda name, value, dims: metrics.append(name)
+    events = run(loop)
+    assert [e.type for e in events if e.type in ("warning", "done")] == ["warning", "done"]
+    assert "".join(e.data["delta"] for e in events if e.type == "text") == "Answer without tools."
+    assert "toolConfig" in bedrock.requests[0] and "toolConfig" not in bedrock.requests[1]
+    assert "ToolConfigRejected" in metrics
+
+
+def test_validation_error_without_tools_still_propagates():
+    class Rejects:
+        def converse_stream(self, **_):
+            raise ClientError({"Error": {"Code": "ValidationException", "Message": "bad"}}, "ConverseStream")
+
+    loop = make(Rejects(), None)
+    with pytest.raises(ClientError):
+        run(loop)
+
+
+def test_empty_tool_output_is_never_sent_as_empty_text():
+    bedrock = FakeBedrock([tool_turn([("t1", "get_order_status", {"order_id": "ORD-5001"})]), text_turn("ok")])
+    loop = make(bedrock, FakeGateway(FakeSession(results={"get_order_status": (True, "", None)})))
+    run(loop)
+    tr = bedrock.requests[1]["messages"][-1]["content"][0]["toolResult"]
+    assert tr["content"] == [{"text": "(empty result)"}]

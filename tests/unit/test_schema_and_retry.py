@@ -9,29 +9,39 @@ from tests.conftest import load_service
 schema = load_service("agent", "schema")
 
 
-def test_simplify_schema_collapses_optional_and_drops_titles():
+def test_input_schema_collapses_optional_and_moves_constraints_into_descriptions():
     src = {
         "title": "Args",
         "type": "object",
+        "additionalProperties": False,
         "properties": {
             "query": {"anyOf": [{"type": "string", "maxLength": 100}, {"type": "null"}], "default": None, "title": "Query"},
-            "limit": {"type": "integer", "minimum": 1, "title": "Limit"},
+            "limit": {"type": "integer", "minimum": 1, "title": "Limit", "description": "Max rows"},
         },
         "required": ["limit"],
     }
-    out = schema.simplify_schema(src)
+    out = schema.to_input_schema(src)
     assert out == {
         "type": "object",
-        "properties": {"query": {"type": "string", "maxLength": 100, "default": None}, "limit": {"type": "integer", "minimum": 1}},
+        "properties": {
+            "query": {"type": "string", "description": "(at most 100 characters)"},
+            "limit": {"type": "integer", "description": "Max rows (minimum 1)"},
+        },
         "required": ["limit"],
     }
 
 
-def test_tool_spec_rejects_invalid_names():
-    with pytest.raises(ValueError):
-        schema.to_bedrock_tool_spec("bad name!", "d", {})
+def test_tool_spec_rejects_names_nova_does_not_accept():
+    for bad in ("bad name!", "read-query", "1tool", "", "x" * 65):
+        with pytest.raises(schema.InvalidToolError):
+            schema.to_bedrock_tool_spec(bad, "d", {})
     spec = schema.to_bedrock_tool_spec("ok_name", None, {})
     assert spec["toolSpec"]["inputSchema"]["json"] == {"type": "object", "properties": {}}
+
+
+def test_ref_schemas_are_rejected_at_discovery_time():
+    with pytest.raises(schema.InvalidToolError):
+        schema.to_input_schema({"type": "object", "properties": {"a": {"$ref": "#/$defs/A"}}, "$defs": {"A": {"type": "object"}}})
 
 
 def test_full_jitter_delays_are_bounded():

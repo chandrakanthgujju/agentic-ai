@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from collections.abc import AsyncIterator, Callable
 
+from botocore.exceptions import ClientError
 from settings import SYSTEM_PROMPT, AgentSettings
 from tool_gateway import ToolGateway, ToolResult
 
@@ -72,6 +73,47 @@ def close_dangling_turns(messages: list[dict]) -> None:
         messages.append({"role": "assistant", "content": [{"text": "(Stopped before completing an answer.)"}]})
 
 
+def normalize_messages(messages: list[dict]) -> list[dict]:
+    """Return a copy of ``messages`` that satisfies the Converse API's shape rules.
+
+    Converse rejects (ValidationException) empty or whitespace-only text blocks,
+    messages with no content, consecutive messages with the same role and a
+    conversation that does not start with a user message. Stored history can
+    contain any of these after an interrupted turn, so every request is
+    normalised here instead of trusting the store.
+    """
+    out: list[dict] = []
+    for m in messages:
+        role = m.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        content = []
+        for block in m.get("content") or []:
+            if "text" in block:
+                if isinstance(block["text"], str) and block["text"].strip():
+                    content.append({"text": block["text"]})
+            elif "toolResult" in block:
+                tr = dict(block["toolResult"])
+                parts = [p for p in tr.get("content") or [] if not ("text" in p and not str(p["text"]).strip())]
+                tr["content"] = parts or [{"text": "(empty result)"}]
+                content.append({"toolResult": tr})
+            else:
+                content.append(block)
+        if not content:
+            continue
+        if out and out[-1]["role"] == role:
+            out[-1] = {"role": role, "content": out[-1]["content"] + content}
+        else:
+            out.append({"role": role, "content": content})
+    while out and out[0]["role"] != "user":
+        out.pop(0)
+    return out
+
+
+def _error_code(exc: BaseException) -> str:
+    return (getattr(exc, "response", None) or {}).get("Error", {}).get("Code", "")
+
+
 class AgentLoop:
     def __init__(
         self,
@@ -94,7 +136,7 @@ class AgentLoop:
     def _request(self, spec: ModelSpec, messages: list[dict], tool_specs: list[dict]) -> dict:
         req: dict[str, Any] = {
             "modelId": spec.id,
-            "messages": messages,
+            "messages": normalize_messages(messages),
             "system": [{"text": SYSTEM_PROMPT}],
             "inferenceConfig": {"maxTokens": spec.max_tokens, "temperature": spec.temperature},
         }
@@ -177,7 +219,24 @@ class AgentLoop:
 
                 request = self._request(spec, messages, tool_specs)
                 t0 = time.perf_counter()
-                stream = await asyncio.to_thread(self._open_stream, request)
+                try:
+                    stream = await asyncio.to_thread(self._open_stream, request)
+                except ClientError as exc:
+                    if _error_code(exc) != "ValidationException" or not tool_specs:
+                        raise
+                    # Some models accept less of JSON Schema / the tool contract than others.
+                    # Log the exact reason (it names the offending field), then answer without
+                    # tools rather than failing the whole turn.
+                    log.error(
+                        "model rejected request with tools; retrying without tools",
+                        extra={"model": spec.id, "error": str(exc), "tools": [t["toolSpec"]["name"] for t in tool_specs]},
+                    )
+                    self.on_metric("ToolConfigRejected", 1, {"model": spec.id})
+                    yield AgentEvent("warning", {"message": "This model rejected the tool configuration; answering without tools."})
+                    tool_specs, session = [], None
+                    messages = strip_tool_blocks(messages)
+                    request = self._request(spec, messages, tool_specs)
+                    stream = await asyncio.to_thread(self._open_stream, request)
 
                 blocks: dict[int, dict] = {}
                 async for event in self._aiter(stream):
@@ -257,7 +316,7 @@ class AgentLoop:
                         {
                             "toolResult": {
                                 "toolUseId": tu["toolUseId"],
-                                "content": [{"text": text}],
+                                "content": [{"text": text or "(empty result)"}],
                                 "status": "success" if res.ok else "error",
                             }
                         }

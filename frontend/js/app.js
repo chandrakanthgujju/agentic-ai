@@ -10,9 +10,25 @@ function toast(msg) {
   clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), 4000);
 }
 
+const VIEWS = ["signedOut", "chatView", "adminView"];
+
+// Exactly one <main> view is visible at a time; the model picker only belongs to chat.
 function show(view) {
-  for (const id of ["signedOut", "chatView", "adminView"]) $(id).hidden = id !== view;
+  for (const id of VIEWS) $(id).hidden = id !== view;
   for (const b of document.querySelectorAll(".tab")) b.classList.toggle("active", `${b.dataset.view}View` === view);
+  $("modelPicker").hidden = view !== "chatView";
+}
+
+// Single place that renders signed-in vs signed-out chrome, used on first load,
+// after the OAuth redirect callback, after a reload, and on bfcache restores.
+function renderAuth(claims) {
+  const signedIn = Boolean(claims);
+  document.body.dataset.auth = signedIn ? "in" : "out";
+  $("userEmail").textContent = signedIn ? claims.email || "" : "";
+  $("logoutBtn").hidden = !signedIn;
+  $("tabs").hidden = !signedIn;
+  $("adminTab").hidden = !(signedIn && auth.isAdmin());
+  if (!signedIn) show("signedOut");
 }
 
 function addMessage(role, text = "") {
@@ -77,11 +93,13 @@ function newChat() {
 async function send(text) {
   if (state.busy) return;
   state.busy = true; $("sendBtn").disabled = true;
+  const wasNewConversation = !state.conversationId;
   addMessage("user", text);
   const out = addMessage("assistant");
   out.body.classList.add("cursor");
   const chips = new Map();
   const citations = [];
+  let failed = false;
   try {
     await api.streamChat(
       { message: text, modelId: $("modelSelect").value, ...(state.conversationId ? { conversationId: state.conversationId } : {}) },
@@ -97,7 +115,13 @@ async function send(text) {
           if (c) { c.className = `chip ${data.ok ? "ok" : "err"}`; c.textContent = `🛠 ${data.name} · ${data.ms} ms`; }
           citations.push(...(data.citations || []));
         } else if (type === "warning") addMessage("warning", data.message);
-        else if (type === "error") addMessage("error", `${data.message} (${data.code})`);
+        else if (type === "error") {
+          failed = true;
+          addMessage("error", data.code ? `${data.message} (${data.code})` : data.message);
+          // A failed first turn is not saved server-side; don't point the next
+          // message at a conversation that does not exist.
+          if (wasNewConversation) state.conversationId = null;
+        }
         else if (type === "done") {
           const meta = document.createElement("div"); meta.className = "meta";
           meta.textContent = `${data.usage.inputTokens} in / ${data.usage.outputTokens} out tokens · ${data.iterations} model call(s) · ${data.toolCalls} tool call(s)`;
@@ -111,10 +135,17 @@ async function send(text) {
       out.el.append(c);
     }
   } catch (e) {
+    failed = true;
     addMessage("error", e.message);
+    if (wasNewConversation) state.conversationId = null;
   } finally {
     out.body.classList.remove("cursor");
-    if (!out.body.textContent) out.body.textContent = "(no text returned)";
+    if (!out.body.textContent) {
+      // Never show a placeholder next to an error: drop the empty bubble unless
+      // it carries tool chips worth keeping.
+      if (failed) { if (out.tools.hidden) out.el.remove(); }
+      else out.body.textContent = "(no text returned)";
+    }
     state.busy = false; $("sendBtn").disabled = false;
     loadConversations().catch(() => {});
   }
@@ -127,16 +158,17 @@ async function main() {
   $("logoutBtn").onclick = () => auth.logout();
 
   try { await auth.handleRedirect(); } catch (e) { toast(e.message); }
-  if (!(await auth.idToken())) { show("signedOut"); return; }
+  // Back/forward cache can restore a stale signed-out/in page; re-check on restore.
+  window.addEventListener("pageshow", async (e) => {
+    if (e.persisted) renderAuth((await auth.idToken()) ? auth.claims() : null);
+  });
+  if (!(await auth.idToken())) { renderAuth(null); return; }
 
-  const claims = auth.claims();
-  $("userEmail").textContent = claims?.email || "";
-  for (const id of ["logoutBtn", "tabs", "modelPicker"]) $(id).hidden = false;
-  if (auth.isAdmin()) { $("adminTab").hidden = false; wireAdmin(toast); }
+  renderAuth(auth.claims());
+  if (auth.isAdmin()) wireAdmin(toast);
   for (const b of document.querySelectorAll(".tab")) {
     b.onclick = () => {
       show(`${b.dataset.view}View`);
-      $("modelPicker").hidden = b.dataset.view !== "chat";
       if (b.dataset.view === "admin") { refreshDocs(toast); refreshJobs(toast); }
     };
   }

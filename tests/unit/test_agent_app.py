@@ -109,7 +109,44 @@ def test_model_failure_ends_stream_with_typed_error():
     deps = app_mod.Deps(ModelCatalog.from_json(MODELS_JSON), MemoryStore(), Broken(), None, settings_mod.AgentSettings())
     client = TestClient(app_mod.create_app(lambda: deps))
     events = parse_sse(client.post("/api/chat", json={"message": "hi"}, headers=ctx_header()).text)
-    assert events[-1] == ("error", {"message": "The model call failed. Please retry.", "code": "AccessDeniedException"})
+    assert events[-1] == ("error", {"message": "enable model access", "code": "AccessDeniedException"})
+
+
+def test_public_error_redacts_identifiers_and_hides_internal_errors():
+    from botocore.exceptions import ClientError
+
+    exc = ClientError(
+        {
+            "Error": {
+                "Code": "ValidationException",
+                "Message": "Guardrail arn:aws:bedrock:us-east-1:123456789012:guardrail/abc not usable by 123456789012 "
+                "key AKIAABCDEFGHIJKLMNOP " + "x" * 400,
+            }
+        },
+        "ConverseStream",
+    )
+    code, msg = app_mod.public_error(exc)
+    assert code == "ValidationException"
+    assert "123456789012" not in msg and "arn:aws" not in msg and "AKIA" not in msg
+    assert msg.startswith("Guardrail <arn> not usable by <account> key <redacted>")
+    assert len(msg) <= 300
+    assert app_mod.public_error(RuntimeError("secret internals")) == ("RuntimeError", "The model call failed. Please retry.")
+
+
+def test_failed_first_turn_is_not_persisted():
+    class Broken:
+        def converse_stream(self, **_):
+            from botocore.exceptions import ClientError
+
+            raise ClientError({"Error": {"Code": "ValidationException", "Message": "bad"}}, "ConverseStream")
+
+    store = MemoryStore()
+    deps = app_mod.Deps(ModelCatalog.from_json(MODELS_JSON), store, Broken(), None, settings_mod.AgentSettings())
+    client = TestClient(app_mod.create_app(lambda: deps))
+    events = parse_sse(client.post("/api/chat", json={"message": "hi"}, headers=ctx_header()).text)
+    assert events[-1] == ("error", {"message": "bad", "code": "ValidationException"})
+    assert not any(e[0] == "text" for e in events)
+    assert store.items == {}
 
 
 def test_healthz():

@@ -385,6 +385,13 @@ make synth     # full synth with Lambda bundling and cdk-nag
 make diagrams  # re-render docs/architecture/*.png (needs graphviz)
 ```
 
+Optional browser tests for the UI (skipped automatically when Playwright is not installed):
+
+```bash
+pip install playwright && playwright install chromium
+pytest tests/ui
+```
+
 Run the agent locally against your own AWS credentials (no Cognito; `AUTH_MODE=local-dev` is ignored inside Lambda):
 
 ```bash
@@ -434,7 +441,8 @@ Verified for this PR (on a Linux build machine, no AWS credentials):
 
 | Symptom | Likely cause / fix |
 | --- | --- |
-| Chat shows "The model call failed" | Model access not enabled for that model/region (Bedrock console → Model access) |
+| Chat shows "The model call failed" or a Bedrock error | The UI shows Bedrock's (sanitized) reason. Common causes: model access not enabled for that model/region (Bedrock console → Model access). Full details: the Logs Insights query in [docs/operations.md](docs/operations.md#diagnosing-chat-errors) |
+| Warning "This model rejected the tool configuration" | The model refused the tool schema; the agent answered without tools. See the `model rejected request with tools` log line for the exact field |
 | `AccessDeniedException` for Claude only | Anthropic use-case form not submitted |
 | HTTP 429 in the UI | API Gateway throttling — raise `chatRateLimit` or slow down |
 | Login fails with `redirect_mismatch` | Only `AppUrl` is a registered callback; open the app from that exact URL |
