@@ -396,7 +396,7 @@ PYTHONPATH=..:. uvicorn app:app --port 8080
 curl -N -X POST localhost:8080/api/chat -H 'content-type: application/json' -d '{"message":"hello"}'
 ```
 
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs lint, tests and `cdk synth` on every
+CI ([`ci/github-actions-ci.yml`](ci/github-actions-ci.yml); move it to `.github/workflows/ci.yml` to enable it) runs lint, tests and `cdk synth` on every
 pull request. It has no AWS credentials and never deploys.
 
 ## Cost
